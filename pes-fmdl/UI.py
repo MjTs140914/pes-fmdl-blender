@@ -1,11 +1,23 @@
 import bmesh
+import os
+import re
 import bpy
 import bpy.props
 import bpy_extras.io_utils
+import random
+from mathutils import Vector
 
 from . import FmdlFile, Ftex, IO, MaterialPresets, PesSkeletonData
 
+# AddonsPath = str()
+AddonsPath = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), '..'))
+base_file_blend = '%s\\pes-fmdl\\base_file.blend' % AddonsPath
 
+def node_group():
+	inner_path = 'NodeTree'
+	for NodeTree in ('NRM Converter', 'SRM Seperator', 'TRM Subsurface'):
+		if not NodeTree in bpy.data.node_groups:
+			bpy.ops.wm.append(filepath=os.path.join(base_file_blend, inner_path, NodeTree),directory=os.path.join(base_file_blend, inner_path),filename=NodeTree)
 
 vertexGroupSummaryCache = {}
 
@@ -217,7 +229,39 @@ def showExportSummary(area, objectName):
 				space.text = bpy.data.texts[textName]
 				break
 
+def findDirectory(dirPath):
+	path = str()
+	listDir=[]
+	for root in os.walk(dirPath):
+		if "#Win" in root[0]:
+			path = root[0].replace("\\",",")
+			lists = path.split(',')
+			if "#Win" in lists:
+				for p in lists:
+					listDir.append(p)
+					if p == "#Win":	
+						path = f"{listDir[0]}\\{os.path.join(*listDir).split(':')[1]}"
+						return path[:-4]
 
+def getDirPath(dirPath):
+	for root, directories, filenames in os.walk(dirPath):
+		for fileName in filenames:
+			filename, extension = os.path.splitext(fileName)
+			return os.path.dirname(os.path.join(root, filename+extension))
+
+def textureLoad(dirPath):
+	for root, directories, filenames in os.walk(dirPath):
+		for fileName in filenames:
+			filename, extension = os.path.splitext(fileName)
+			if extension.lower() == '.ftex':
+				ddsPath = os.path.join(bpy.app.tempdir, filename + '.dds')
+				ftexPath = os.path.join(root, filename + extension)
+				if not os.path.isfile(ddsPath) and not "lut" in ddsPath and not "LUT" in ddsPath:
+					try:
+						Ftex.ftexToDds(ftexPath, ddsPath)
+					except Exception as msg:
+						print(format(msg))
+				
 
 class FMDL_Scene_Import(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 	"""Load a PES FMDL file"""
@@ -225,17 +269,17 @@ class FMDL_Scene_Import(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 	bl_label = "Import Fmdl"
 	bl_options = {'REGISTER', 'UNDO'}
 	
-	extensions_enabled = bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
-	antiblur = bpy.props.BoolProperty(name = "Automatic antiblur meshes", default = True)
-	loop_preservation = bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
-	mesh_splitting = bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
-	load_textures = bpy.props.BoolProperty(name = "Load textures", default = True)
-	import_all_bounding_boxes = bpy.props.BoolProperty(name = "Import all bounding boxes", default = False)
+	extensions_enabled : bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
+	antiblur : bpy.props.BoolProperty(name = "Automatic antiblur meshes", default = True)
+	loop_preservation : bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
+	mesh_splitting : bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
+	load_textures : bpy.props.BoolProperty(name = "Load textures", default = True)
+	import_all_bounding_boxes : bpy.props.BoolProperty(name = "Import all bounding boxes", default = False)
 	
 	import_label = "PES FMDL (.fmdl)"
 	
 	filename_ext = ".fmdl"
-	filter_glob = bpy.props.StringProperty(default="*.fmdl", options={'HIDDEN'})
+	filter_glob : bpy.props.StringProperty(default="*.fmdl", options={'HIDDEN'})
 	
 	def invoke(self, context, event):
 		self.extensions_enabled = context.scene.fmdl_import_extensions_enabled
@@ -247,8 +291,15 @@ class FMDL_Scene_Import(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 		return bpy_extras.io_utils.ImportHelper.invoke(self, context, event)
 	
 	def execute(self, context):
+		node_group()
 		filename = self.filepath
-		
+		getTextureDir = str()
+		textureDir = f"{findDirectory(os.path.dirname(filename))}sourceimages"
+		if os.path.exists(textureDir):
+			getTextureDir = getDirPath(textureDir)
+		if os.path.exists(getTextureDir):
+			textureLoad(getTextureDir)
+
 		importSettings = IO.ImportSettings()
 		importSettings.enableExtensions = self.extensions_enabled
 		importSettings.enableAntiblur = self.antiblur
@@ -256,6 +307,7 @@ class FMDL_Scene_Import(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 		importSettings.enableMeshSplitting = self.mesh_splitting
 		importSettings.enableLoadTextures = self.load_textures
 		importSettings.enableImportAllBoundingBoxes = self.import_all_bounding_boxes
+		importSettings.texturePath = bpy.app.tempdir
 		
 		fmdlFile = FmdlFile.FmdlFile()
 		fmdlFile.readFile(filename)
@@ -275,10 +327,10 @@ class FMDL_Scene_Export_Scene(bpy.types.Operator, bpy_extras.io_utils.ExportHelp
 	bl_label = "Export Fmdl"
 	bl_options = {'REGISTER'}
 	
-	extensions_enabled = bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
-	antiblur = bpy.props.BoolProperty("Automatic antiblur meshes", default = True)
-	loop_preservation = bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
-	mesh_splitting = bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
+	extensions_enabled : bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
+	antiblur : bpy.props.BoolProperty("Automatic antiblur meshes", default = True)
+	loop_preservation : bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
+	mesh_splitting : bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
 	
 	export_label = "PES FMDL (.fmdl)"
 	
@@ -315,11 +367,11 @@ class FMDL_Scene_Export_Object(bpy.types.Operator, bpy_extras.io_utils.ExportHel
 	bl_label = "Export Fmdl"
 	bl_options = {'REGISTER'}
 	
-	objectName = bpy.props.StringProperty("Object to export")
-	extensions_enabled = bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
-	antiblur = bpy.props.BoolProperty(name = "Automatic antiblur meshes", default = True)
-	loop_preservation = bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
-	mesh_splitting = bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
+	objectName : bpy.props.StringProperty("Object to export")
+	extensions_enabled : bpy.props.BoolProperty(name = "Enable blender-pes-fmdl extensions", default = True)
+	antiblur : bpy.props.BoolProperty(name = "Automatic antiblur meshes", default = True)
+	loop_preservation : bpy.props.BoolProperty(name = "Preserve split vertices", default = True)
+	mesh_splitting : bpy.props.BoolProperty(name = "Autosplit overlarge meshes", default = True)
 	
 	export_label = "PES FMDL (.fmdl)"
 	
@@ -370,7 +422,7 @@ class FMDL_Scene_Export_Object_Summary(bpy.types.Operator):
 	bl_label = "Export Summary"
 	bl_options = {'REGISTER'}
 	
-	objectName = bpy.props.StringProperty("Object to export")
+	objectName : bpy.props.StringProperty("Object to export")
 	
 	@classmethod
 	def poll(cls, context):
@@ -383,7 +435,7 @@ class FMDL_Scene_Export_Object_Summary(bpy.types.Operator):
 		showExportSummary(area, self.objectName)
 		return {'FINISHED'}
 
-class FMDL_Scene_Panel_FMDL_Import_Settings(bpy.types.Menu):
+class FMDL_MT_Scene_Panel_FMDL_Import_Settings(bpy.types.Menu):
 	"""Import Settings"""
 	bl_label = "Import settings"
 	
@@ -423,19 +475,18 @@ class FMDL_Scene_Panel_FMDL_Compose(bpy.types.Operator):
 		context.active_object.fmdl_filename = ""
 		return {'FINISHED'}
 
-class FMDL_Scene_Panel_FMDL_Remove(bpy.types.Operator):
+class FMDL_OT_remove_exportable(bpy.types.Operator):
 	"""Disable separate exporting"""
 	bl_idname = "fmdl.remove_exportable"
 	bl_label = "Remove"
 	bl_options = {'UNDO', 'INTERNAL'}
-	
-	objectName = bpy.props.StringProperty(name = "Object to remove")
+	objectName : bpy.props.StringProperty(name = "Object to remove")
 	
 	def execute(self, context):
 		context.scene.objects[self.objectName].fmdl_file = False
 		return {'FINISHED'}
 
-class FMDL_Scene_Panel_FMDL_Export_Settings(bpy.types.Menu):
+class FMDL_MT_Scene_Panel_FMDL_Export_Settings(bpy.types.Menu):
 	"""Export Settings"""
 	bl_label = "Export settings"
 	
@@ -457,10 +508,10 @@ class FMDL_Scene_Panel_FMDL_Select_Filename(bpy.types.Operator):
 	bl_label = "Select Filename"
 	bl_options = {'UNDO', 'INTERNAL'}
 	
-	objectName = bpy.props.StringProperty(name = "Object to export")
-	filepath = bpy.props.StringProperty(subtype = 'FILE_PATH')
-	check_existing = bpy.props.BoolProperty(default = True)
-	filter_glob = bpy.props.StringProperty(default = "*.fmdl")
+	objectName : bpy.props.StringProperty(name = "Object to export")
+	filepath : bpy.props.StringProperty(subtype = 'FILE_PATH')
+	check_existing : bpy.props.BoolProperty(default = True)
+	filter_glob : bpy.props.StringProperty(default = "*.fmdl")
 	
 	def invoke(self, context, event):
 		context.window_manager.fileselect_add(self)
@@ -479,7 +530,7 @@ def FMDL_Scene_FMDL_Import_MenuItem(self, context):
 def FMDL_Scene_FMDL_Export_MenuItem(self, context):
 	self.layout.operator(FMDL_Scene_Export_Scene.bl_idname, text=FMDL_Scene_Export_Scene.export_label)
 
-class FMDL_Scene_Panel(bpy.types.Panel):
+class FMDL_PT_Scene_Panel(bpy.types.Panel):
 	bl_label = "FMDL I/O"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
@@ -503,18 +554,18 @@ class FMDL_Scene_Panel(bpy.types.Panel):
 		buttonColumn = importRow.column()
 		buttonColumn.operator(FMDL_Scene_Import.bl_idname)
 		buttonColumn.operator(FMDL_Scene_Panel_FMDL_Compose.bl_idname)
-		importRow.menu(FMDL_Scene_Panel_FMDL_Import_Settings.__name__, icon = 'DOWNARROW_HLT', text = "")
+		importRow.menu(FMDL_MT_Scene_Panel_FMDL_Import_Settings.__name__, icon = 'DOWNARROW_HLT', text = "")
 		for object in fmdlFileObjects:
 			box = mainColumn.box()
 			column = box.column()
 			
 			row = column.row()
-			row.label("Object: %s" % object.name)
-			row.operator(FMDL_Scene_Panel_FMDL_Remove.bl_idname, text = "", icon = 'X').objectName = object.name
+			row.label(text = "Object: %s" % object.name)
+			row.operator(FMDL_OT_remove_exportable.bl_idname, text = "", icon = 'X').objectName = object.name
 			
 			row = column.row(align = True)
 			row.prop(object, 'fmdl_filename', text = "Export Path")
-			row.operator(FMDL_Scene_Panel_FMDL_Select_Filename.bl_idname, text = "", icon = 'FILESEL').objectName = object.name
+			row.operator(FMDL_Scene_Panel_FMDL_Select_Filename.bl_idname, text = "", icon = 'FILEBROWSER').objectName = object.name
 			
 			row = column.row()
 			row.operator_context = 'EXEC_DEFAULT'
@@ -530,7 +581,7 @@ class FMDL_Scene_Panel(bpy.types.Panel):
 			if object.fmdl_filename == "":
 				subrow.enabled = False
 			row.operator(FMDL_Scene_Export_Object_Summary.bl_idname, text = "", icon = 'INFO').objectName = object.name
-			row.menu(FMDL_Scene_Panel_FMDL_Export_Settings.__name__, icon = 'DOWNARROW_HLT', text = "")
+			row.menu(FMDL_MT_Scene_Panel_FMDL_Export_Settings.__name__, icon = 'DOWNARROW_HLT', text = "")
 
 
 
@@ -583,11 +634,11 @@ def FMDL_Scene_Skeleton_set_replace(armatureObject, enabled):
 	armatureObject.fmdl_skeleton_replace_type = bpy.context.scene.fmdl_skeleton_type
 	armatureObject.fmdl_skeleton_replace = enabled
 
-class FMDL_Scene_Skeleton_List(bpy.types.UIList):
+class FMDL_UL_Scene_Skeleton_List(bpy.types.UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		row = layout.row(align = True)
 		row.prop(item, 'fmdl_skeleton_replace_effective', text = '')
-		row.label(text = FMDL_Scene_Skeleton_List.objectName(item))
+		row.label(text = FMDL_UL_Scene_Skeleton_List.objectName(item))
 	
 	def filter_items(self, context, data, propname):
 		filterList = []
@@ -596,7 +647,7 @@ class FMDL_Scene_Skeleton_List(bpy.types.UIList):
 		for blenderObject in data.objects:
 			if blenderObject.type == 'ARMATURE':
 				filterList.append(self.bitflag_filter_item)
-				names[blenderObject] = FMDL_Scene_Skeleton_List.objectName(blenderObject)
+				names[blenderObject] = FMDL_UL_Scene_Skeleton_List.objectName(blenderObject)
 			else:
 				filterList.append(0)
 		
@@ -617,7 +668,7 @@ class FMDL_Scene_Skeleton_List(bpy.types.UIList):
 		if blenderObject.parent is None:
 			return blenderObject.name
 		else:
-			return "%s :: %s" % (FMDL_Scene_Skeleton_List.objectName(blenderObject.parent), blenderObject.name)
+			return "%s :: %s" % (FMDL_UL_Scene_Skeleton_List.objectName(blenderObject.parent), blenderObject.name)
 
 def addBone(blenderArmature, bone, boneIDs, bonesByName):
 	if bone in boneIDs:
@@ -710,8 +761,8 @@ def createPesSkeleton(context, skeletonType):
 	blenderArmatureObject = bpy.data.objects.new(armatureName, blenderArmature)
 	armatureObjectID = blenderArmatureObject.name
 	
-	context.scene.objects.link(blenderArmatureObject)
-	context.scene.objects.active = blenderArmatureObject
+	context.collection.objects.link(blenderArmatureObject)
+	context.view_layer.objects.active = blenderArmatureObject
 	bpy.ops.object.mode_set(context.copy(), mode = 'EDIT')
 	
 	boneIDs = {}
@@ -719,7 +770,7 @@ def createPesSkeleton(context, skeletonType):
 		createPesBone(blenderArmature, boneName, boneNames)
 	
 	bpy.ops.object.mode_set(context.copy(), mode = 'OBJECT')
-	context.scene.update()
+	bpy.context.view_layer.update()
 	return (armatureObjectID, armatureName)
 
 def replaceArmatures(context, armatureObjectID, preferredName):
@@ -746,13 +797,13 @@ def replaceArmatures(context, armatureObjectID, preferredName):
 		oldArmature.user_remap(bpy.data.objects[armatureObjectID].data)
 		bpy.data.armatures.remove(oldArmature)
 		
-		context.scene.objects.unlink(oldArmatureObject)
+		context.collection.objects.unlink(oldArmatureObject)
 		oldArmatureObject.user_remap(bpy.data.objects[armatureObjectID])
 		bpy.data.objects.remove(oldArmatureObject)
 	if parentObjectID is not None:
 		bpy.data.objects[armatureObjectID].parent = bpy.data.objects[parentObjectID]
 	bpy.data.objects[armatureObjectID].name = preferredName
-	context.scene.update()
+	bpy.context.view_layer.update()
 
 class FMDL_Scene_Skeleton_Create(bpy.types.Operator):
 	"""Create PES skeleton"""
@@ -783,7 +834,7 @@ class FMDL_Scene_Skeleton_CreateReplace(bpy.types.Operator):
 		replaceArmatures(context, newArmatureObjectID, preferredName)
 		return {'FINISHED'}
 
-class FMDL_Scene_Skeleton_Panel(bpy.types.Panel):
+class FMDL_PT_Scene_Skeleton_Panel(bpy.types.Panel):
 	bl_label = "FMDL Skeleton"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
@@ -799,7 +850,7 @@ class FMDL_Scene_Skeleton_Panel(bpy.types.Panel):
 		self.layout.operator(FMDL_Scene_Skeleton_Create.bl_idname)
 		self.layout.operator(FMDL_Scene_Skeleton_CreateReplace.bl_idname)
 		self.layout.template_list(
-			FMDL_Scene_Skeleton_List.__name__,
+			FMDL_UL_Scene_Skeleton_List.__name__,
 			"FMDL_Scene_Skeleton",
 			scene,
 			"objects",
@@ -860,14 +911,14 @@ class FMDL_Object_BoundingBox_Remove(bpy.types.Operator):
 		for objectID in removeList:
 			latticeID = bpy.data.objects[objectID].data.name
 			while len(bpy.data.objects[objectID].users_scene) > 0:
-				bpy.data.objects[objectID].users_scene[0].objects.unlink(bpy.data.objects[objectID])
+				bpy.context.collection.objects.unlink(bpy.data.objects[objectID])
 			if bpy.data.objects[objectID].users == 0:
 				bpy.data.objects.remove(bpy.data.objects[objectID])
 			if bpy.data.lattices[latticeID].users == 0:
 				bpy.data.lattices.remove(bpy.data.lattices[latticeID])
 		return {'FINISHED'}
 
-class FMDL_Object_BoundingBox_Panel(bpy.types.Panel):
+class FMDL_PT_Object_BoundingBox_Panel(bpy.types.Panel):
 	bl_label = "FMDL Bounding Box"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
@@ -935,7 +986,7 @@ class VertexGroupUsageSummary:
 				summary.totalWeights[groupName] += groupElement.weight
 		vertexGroupSummarySet(meshObject.name, summary)
 
-class FMDL_Mesh_BoneGroup_List(bpy.types.UIList):
+class FMDL_UL_Mesh_BoneGroup_List(bpy.types.UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		armature = data
 		meshObject = active_data
@@ -947,11 +998,11 @@ class FMDL_Mesh_BoneGroup_List(bpy.types.UIList):
 			totalWeight = vertexGroupSummary.totalWeights[item.name]
 			
 			if meshObject.data.fmdl_show_vertex_group_vertices and meshObject.data.fmdl_show_vertex_group_weights:
-				mainRow = row.split(percentage = 0.55, align = True)
+				mainRow = row.split(factor = 0.55, align = True)
 			elif meshObject.data.fmdl_show_vertex_group_vertices or meshObject.data.fmdl_show_vertex_group_weights:
-				mainRow = row.split(percentage = 0.7, align = True)
+				mainRow = row.split(factor = 0.7, align = True)
 			else:
-				mainRow = row.split(percentage = 1.0, align = True)
+				mainRow = row.split(factor = 1.0, align = True)
 			
 			checkboxNameRow = mainRow.row(align = True)
 			checkboxRow = checkboxNameRow.row()
@@ -960,16 +1011,16 @@ class FMDL_Mesh_BoneGroup_List(bpy.types.UIList):
 			checkboxNameRow.label(text = item.name)
 			
 			if meshObject.data.fmdl_show_vertex_group_vertices and meshObject.data.fmdl_show_vertex_group_weights:
-				verticesRow = mainRow.split(percentage = 0.45, align = True)
+				verticesRow = mainRow.split(factor = 0.45, align = True)
 				verticesRow.alignment = 'RIGHT'
 			elif meshObject.data.fmdl_show_vertex_group_vertices or meshObject.data.fmdl_show_vertex_group_weights:
-				verticesRow = mainRow.split(percentage = 1.0, align = True)
+				verticesRow = mainRow.split(factor = 1.0, align = True)
 				verticesRow.alignment = 'RIGHT'
 			
 			if meshObject.data.fmdl_show_vertex_group_vertices:
-				verticesRow.label("%d v" % vertexCount)
+				verticesRow.label(text="%d v" % vertexCount)
 			if meshObject.data.fmdl_show_vertex_group_weights:
-				verticesRow.label("%.1f w" % totalWeight)
+				verticesRow.label(text="%.1f w" % totalWeight)
 		else:
 			row.prop(item, 'fmdl_bone_in_active_mesh', text = '')
 			row.label(text = item.name)
@@ -1073,7 +1124,7 @@ class FMDL_Mesh_BoneGroup_CopyFromSelected(bpy.types.Operator):
 		vertexGroupSummaryRemove(context.active_object.name)
 		return {'FINISHED'}
 
-class FMDL_Mesh_BoneGroup_Specials(bpy.types.Menu):
+class FMDL_MT_Mesh_BoneGroup_Specials(bpy.types.Menu):
 	bl_label = "Bone Group operations"
 	
 	def draw(self, context):
@@ -1081,7 +1132,7 @@ class FMDL_Mesh_BoneGroup_Specials(bpy.types.Menu):
 		self.layout.operator(FMDL_Mesh_BoneGroup_Refresh.bl_idname, icon = 'FILE_REFRESH')
 		self.layout.operator(FMDL_Mesh_BoneGroup_CopyFromSelected.bl_idname, icon = 'LINK_AREA')
 
-class FMDL_Mesh_BoneGroup_Panel(bpy.types.Panel):
+class FMDL_PT_Mesh_BoneGroup_Panel(bpy.types.Panel):
 	bl_label = "FMDL Bone Group"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
@@ -1105,7 +1156,7 @@ class FMDL_Mesh_BoneGroup_Panel(bpy.types.Panel):
 			VertexGroupUsageSummary.compute(meshObject, armature)
 		
 		self.layout.template_list(
-			FMDL_Mesh_BoneGroup_List.__name__,
+			FMDL_UL_Mesh_BoneGroup_List.__name__,
 			"FMDL_Mesh_BoneGroups",
 			armature,
 			"bones",
@@ -1117,11 +1168,11 @@ class FMDL_Mesh_BoneGroup_Panel(bpy.types.Panel):
 		groupSize = len(meshObject.vertex_groups)
 		
 		summaryRow = self.layout.row()
-		summaryRow.label("Bone group size: %s/32%s" % (groupSize, ' (!!)' if groupSize > 32 else ''))
-		summaryRow.menu(FMDL_Mesh_BoneGroup_Specials.__name__, icon = 'DOWNARROW_HLT', text = "")
+		summaryRow.label(text="Bone group size: %s/32%s" % (groupSize, ' (!!)' if groupSize > 32 else ''))
+		summaryRow.menu(FMDL_MT_Mesh_BoneGroup_Specials.__name__, icon = 'DOWNARROW_HLT', text = "")
 		
 		detailLayout = self.layout.row()
-		detailLayoutSplit = detailLayout.split(percentage = 0.6)
+		detailLayoutSplit = detailLayout.split(factor = 0.6)
 		leftColumn = detailLayoutSplit.column()
 		rightColumn = detailLayoutSplit.column()
 		
@@ -1161,23 +1212,22 @@ def FMDL_Material_Preset_get(material):
 			return False
 		
 		textures = {}
-		for textureSlot in material.texture_slots:
-			if textureSlot is None:
-				continue
-			if textureSlot.texture is None:
-				continue
-			if textureSlot.texture.fmdl_texture_role in textures:
-				return False
-			textures[textureSlot.texture.fmdl_texture_role] = textureSlot.texture
+		for textureSlot in material.node_tree.nodes:
+			if textureSlot.type == 'TEX_IMAGE':
+				if textureSlot is None:
+					continue
+				if textureSlot.name in textures:
+					return False
+				textures[textureSlot.name] = textureSlot.image.name
 		if len(preset.textures) != len(textures):
 			return False
 		for texture in preset.textures:
 			if texture.role not in textures:
 				return False
 			if texture.required:
-				if textures[texture.role].fmdl_texture_directory != texture.directory:
+				if material.node_tree.nodes[texture.role].fmdl_texture_directory != texture.directory:
 					return False
-				if textures[texture.role].fmdl_texture_filename != texture.filename:
+				if material.node_tree.nodes[texture.role].fmdl_texture_filename != texture.filename:
 					return False
 		
 		parameters = {}
@@ -1228,36 +1278,30 @@ def FMDL_Material_Preset_set(material, value):
 	uvMapColor = None
 	uvMapNormals = None
 	existingTextures = {}
-	for textureSlot in material.texture_slots:
-		if textureSlot is None:
-			continue
-		if textureSlot.texture is None:
-			continue
-		if textureSlot.texture.fmdl_texture_role not in presetTextures:
-			continue
-		if presetTextures[textureSlot.texture.fmdl_texture_role].required:
-			continue
-		if textureSlot.texture.fmdl_texture_role in existingTextures:
-			continue
-		existingTextures[textureSlot.texture.fmdl_texture_role] = textureSlot.texture.name
-		if '_NRM' in textureSlot.texture.fmdl_texture_role and uvMapNormals is None:
-			uvMapNormals = textureSlot.uv_layer
-		if '_NRM' not in textureSlot.texture.fmdl_texture_role and uvMapColor is None:
-			uvMapColor = textureSlot.uv_layer
-	for i in range(len(material.texture_slots)):
-		material.texture_slots.clear(i)
-	if uvMapColor is None:
-		uvMapColor = 'UVMap'
-	if uvMapNormals is None:
-		uvMapNormals = uvMapColor
+	for textureSlot in material.node_tree.nodes:
+		if textureSlot.type == 'TEX_IMAGE':
+			if textureSlot is None:
+				continue
+			if textureSlot.image is None:
+				continue
+			if textureSlot.image.name not in presetTextures:
+				continue
+			if presetTextures[textureSlot.name].required:
+				continue
+			if textureSlot.image.name in existingTextures:
+				continue
+
+			existingTextures[textureSlot.name] = textureSlot.image.name
+
 	# Create new texture slots
+	IO.createNodeGroups(material)
 	for texture in preset.textures:
 		if texture.role in existingTextures:
-			blenderTexture = bpy.data.textures[existingTextures[texture.role]]
+			blenderTexture = bpy.data.images[existingTextures[texture.role]]
 		else:
-			blenderTexture = IO.createTexture(texture.role, texture.directory, texture.filename)
+			blenderTexture = IO.createTexture(material, texture.role, texture.directory, texture.filename)
 		
-		IO.createTextureSlot(material, blenderTexture, uvMapColor, uvMapNormals)
+		IO.createTextureSlot(material, blenderTexture, texture.role)
 	
 	# Summarize and clear out existing parameters
 	existingParameters = {}
@@ -1279,7 +1323,7 @@ def FMDL_Material_Preset_set(material, value):
 			]
 		else:
 			blenderParameter.parameters = parameter.defaultValues[:]
-
+			
 def FMDL_Material_Flags_twosided_get(material):
 	return material.fmdl_alpha_flags & 32 > 0
 
@@ -1396,13 +1440,13 @@ class FMDL_Material_Parameter_List_MoveDown(bpy.types.Operator):
 		material.fmdl_material_parameter_active += 1
 		return {'FINISHED'}
 
-class FMDL_Material_Parameter_Name_List(bpy.types.UIList):
+class FMDL_UL_material_parameter_list(bpy.types.UIList):
 	def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
 		row = layout.row(align = True)
 		row.alignment = 'EXPAND'
 		row.prop(item, 'name', text = "", emboss = False)
 
-class FMDL_Material_Panel(bpy.types.Panel):
+class FMDL_PT_Material_Panel(bpy.types.Panel):
 	bl_label = "FMDL Material Settings"
 	bl_space_type = "PROPERTIES"
 	bl_region_type = "WINDOW"
@@ -1422,7 +1466,7 @@ class FMDL_Material_Panel(bpy.types.Panel):
 		mainColumn.prop(material, "fmdl_material_antiblur")
 		
 		mainColumn.separator()
-		mainColumn.label("Material Flags:")
+		mainColumn.label(text = "Material Flags:")
 		flagBox = mainColumn.box()
 		flagBox.prop(material, "fmdl_alpha_flags")
 		flagBox.prop(material, "fmdl_shadow_flags")
@@ -1434,24 +1478,26 @@ class FMDL_Material_Panel(bpy.types.Panel):
 		row.prop(material, "fmdl_flags_invisible")
 		
 		mainColumn.separator()
-		mainColumn.label("Material Parameters:")
+		mainColumn.label(text = "Material Parameters:")
 		parameterListRow = mainColumn.row()
+
 		parameterListRow.template_list(
-			FMDL_Material_Parameter_Name_List.__name__,
+			FMDL_UL_material_parameter_list.__name__,
 			"FMDL_Material_Parameter_Names",
 			material,
 			"fmdl_material_parameters",
 			material,
 			"fmdl_material_parameter_active"
 		)
-		
-		listButtonColumn = parameterListRow.column(align = True)
-		listButtonColumn.operator("fmdl.material_parameter_add", icon = 'ZOOMIN', text = "")
-		listButtonColumn.operator("fmdl.material_parameter_remove", icon = 'ZOOMOUT', text = "")
+
+		listButtonColumn = parameterListRow.column(align=True)
+		listButtonColumn.operator("fmdl.material_parameter_add", icon='ADD', text="")
+		listButtonColumn.operator("fmdl.material_parameter_remove", icon='REMOVE', text="")
 		listButtonColumn.separator()
-		listButtonColumn.operator("fmdl.material_parameter_moveup", icon = 'TRIA_UP', text = "")
-		listButtonColumn.operator("fmdl.material_parameter_movedown", icon = 'TRIA_DOWN', text = "")
-		
+		listButtonColumn.operator("fmdl.material_parameter_moveup", icon='TRIA_UP', text="")
+		listButtonColumn.operator("fmdl.material_parameter_movedown", icon='TRIA_DOWN', text="")
+		mainColumn = self.layout.column()
+		mainColumn=mainColumn.row()
 		if 0 <= material.fmdl_material_parameter_active < len(material.fmdl_material_parameters):
 			valuesColumn = mainColumn.column()
 			parameter = material.fmdl_material_parameter_active
@@ -1487,18 +1533,28 @@ class FMDL_Texture_Load_Ftex(bpy.types.Operator):
 def FMDL_Texture_Load_Ftex_Button(self, context):
 	self.layout.operator(FMDL_Texture_Load_Ftex.bl_idname)
 
-class FMDL_Texture_Panel(bpy.types.Panel):
+class FMDL_PT_Texture_Panel(bpy.types.Panel):
 	bl_label = "FMDL Texture Settings"
-	bl_space_type = "PROPERTIES"
-	bl_region_type = "WINDOW"
-	bl_context = "texture"
+	bl_space_type = 'NODE_EDITOR'
+	bl_region_type = 'UI'
+	bl_category = 'Tool'
+	bl_context = "objectmode"
 	
 	@classmethod
 	def poll(cls, context):
-		return context.texture != None
+		if not (
+			context.mode == 'OBJECT'
+			and context.object is not None
+			and context.active_object
+			and context.material
+			and context.object.type == 'MESH'
+			and context.active_node is not None
+			and context.active_node.show_texture):
+				return False
+		return True
 	
 	def draw(self, context):
-		texture = context.texture
+		texture = context.active_node
 		
 		mainColumn = self.layout.column()
 		mainColumn.prop(texture, "fmdl_texture_role", text = "Role")
@@ -1547,38 +1603,38 @@ classes = [
 	FMDL_Scene_Export_Scene,
 	FMDL_Scene_Export_Object,
 	FMDL_Scene_Export_Object_Summary,
-	FMDL_Scene_Panel_FMDL_Import_Settings,
+	FMDL_MT_Scene_Panel_FMDL_Import_Settings,
 	FMDL_Scene_Panel_FMDL_Compose,
-	FMDL_Scene_Panel_FMDL_Remove,
-	FMDL_Scene_Panel_FMDL_Export_Settings,
+	FMDL_OT_remove_exportable,
+	FMDL_MT_Scene_Panel_FMDL_Export_Settings,
 	FMDL_Scene_Panel_FMDL_Select_Filename,
-	FMDL_Scene_Panel,
+	FMDL_PT_Scene_Panel,
 	
-	FMDL_Scene_Skeleton_List,
+	FMDL_UL_Scene_Skeleton_List,
 	FMDL_Scene_Skeleton_Create,
 	FMDL_Scene_Skeleton_CreateReplace,
-	FMDL_Scene_Skeleton_Panel,
+	FMDL_PT_Scene_Skeleton_Panel,
 	
 	FMDL_Object_BoundingBox_Create,
 	FMDL_Object_BoundingBox_Remove,
-	FMDL_Object_BoundingBox_Panel,
+	FMDL_PT_Object_BoundingBox_Panel,
 	
-	FMDL_Mesh_BoneGroup_List,
+	FMDL_UL_Mesh_BoneGroup_List,
 	FMDL_Mesh_BoneGroup_RemoveUnused,
 	FMDL_Mesh_BoneGroup_Refresh,
 	FMDL_Mesh_BoneGroup_CopyFromSelected,
-	FMDL_Mesh_BoneGroup_Specials,
-	FMDL_Mesh_BoneGroup_Panel,
+	FMDL_MT_Mesh_BoneGroup_Specials,
+	FMDL_PT_Mesh_BoneGroup_Panel,
 	
 	FMDL_Material_Parameter_List_Add,
 	FMDL_Material_Parameter_List_Remove,
 	FMDL_Material_Parameter_List_MoveUp,
 	FMDL_Material_Parameter_List_MoveDown,
-	FMDL_Material_Parameter_Name_List,
-	FMDL_Material_Panel,
+	FMDL_UL_material_parameter_list,
+	FMDL_PT_Material_Panel,
 	
 	FMDL_Texture_Load_Ftex,
-	FMDL_Texture_Panel,
+	FMDL_PT_Texture_Panel,
 	
 	FMDL_Util_Select_Underweight,
 ]
@@ -1669,22 +1725,22 @@ def register():
 	for c in classes:
 		bpy.utils.register_class(c)
 	
-	bpy.types.INFO_MT_file_import.append(FMDL_Scene_FMDL_Import_MenuItem)
-	bpy.types.INFO_MT_file_export.append(FMDL_Scene_FMDL_Export_MenuItem)
+	bpy.types.TOPBAR_MT_file_import.append(FMDL_Scene_FMDL_Import_MenuItem)
+	bpy.types.TOPBAR_MT_file_export.append(FMDL_Scene_FMDL_Export_MenuItem)
 	bpy.types.DATA_PT_uv_texture.append(FMDL_Mesh_High_Definition_UV_setting)
 	bpy.types.TEXTURE_PT_image.append(FMDL_Texture_Load_Ftex_Button)
 	bpy.types.VIEW3D_MT_select_edit_mesh.append(FMDL_Util_Select_Underweight_MenuItem)
 	
-	bpy.app.handlers.scene_update_post.append(FMDL_Util_TrackChanges)
+	bpy.app.handlers.frame_change_pre.append(FMDL_Util_TrackChanges)
 
 def unregister():
-	bpy.app.handlers.scene_update_post.remove(FMDL_Util_TrackChanges)
+	bpy.app.handlers.frame_change_pre.remove(FMDL_Util_TrackChanges)
 	
 	bpy.types.VIEW3D_MT_select_edit_mesh.remove(FMDL_Util_Select_Underweight_MenuItem)
 	bpy.types.TEXTURE_PT_image.remove(FMDL_Texture_Load_Ftex_Button)
 	bpy.types.DATA_PT_uv_texture.remove(FMDL_Mesh_High_Definition_UV_setting)
-	bpy.types.INFO_MT_file_export.remove(FMDL_Scene_FMDL_Export_MenuItem)
-	bpy.types.INFO_MT_file_import.remove(FMDL_Scene_FMDL_Import_MenuItem)
+	bpy.types.TOPBAR_MT_file_export.remove(FMDL_Scene_FMDL_Export_MenuItem)
+	bpy.types.TOPBAR_MT_file_import.remove(FMDL_Scene_FMDL_Import_MenuItem)
 	
 	for c in classes[::-1]:
 		bpy.utils.unregister_class(c)

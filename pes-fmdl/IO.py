@@ -4,6 +4,9 @@ import itertools
 import os
 import os.path
 import re
+import bmesh
+import random
+from mathutils import Vector
 
 from . import FmdlFile, FmdlAntiBlur, FmdlMeshSplitting, FmdlSplitVertexEncoding, Ftex, PesSkeletonData
 
@@ -26,6 +29,7 @@ class ImportSettings:
 		self.enableMeshSplitting = True
 		self.enableLoadTextures = True
 		self.enableImportAllBoundingBoxes = False
+		self.texturePath = str()
 
 class ExportSettings:
 	def __init__(self):
@@ -60,8 +64,8 @@ def createBoundingBox(context, meshObject, min, max):
 	
 	blenderLatticeObject = bpy.data.objects.new(name, blenderLattice)
 	blenderLatticeObject.parent = bpy.data.objects[objectID]
-	context.scene.objects.link(blenderLatticeObject)
-	context.scene.update()
+	context.collection.objects.link(blenderLatticeObject)
+	bpy.context.view_layer.update()
 
 def createFittingBoundingBox(context, meshObject):
 	transformedMesh = meshObject.data.copy()
@@ -75,7 +79,7 @@ def createFittingBoundingBox(context, meshObject):
 	
 	createBoundingBox(context, meshObject, minCoordinates, maxCoordinates)
 
-def createTexture(role, directory, filename):
+def createTexture(blenderMaterial, role, directory, filename):
 	blenderImage = bpy.data.images.new(filename, width = 0, height = 0)
 	blenderImage.source = 'FILE'
 	
@@ -87,12 +91,8 @@ def createTexture(role, directory, filename):
 		blenderImage.colorspace_settings.name = 'Non-Color'
 	
 	textureName = "[%s] %s" % (role, filename)
-	blenderTexture = bpy.data.textures.new(textureName, type = 'IMAGE')
+	blenderTexture = blenderMaterial.node_tree.nodes.new("ShaderNodeTexImage")
 	blenderTexture.image = blenderImage
-	blenderTexture.use_alpha = True
-	
-	if '_NRM' in role:
-		blenderTexture.use_normal_map = True
 	
 	blenderTexture.fmdl_texture_filename = filename
 	blenderTexture.fmdl_texture_directory = directory
@@ -100,24 +100,76 @@ def createTexture(role, directory, filename):
 	
 	return blenderTexture
 
-def createTextureSlot(blenderMaterial, blenderTexture, uvMapColor, uvMapNormals):
-	blenderTextureSlot = blenderMaterial.texture_slots.add()
-	blenderTextureSlot.texture = blenderTexture
-	blenderTextureSlot.texture_coords = 'UV'
-	if '_NRM' in blenderTexture.fmdl_texture_role:
-		blenderTextureSlot.uv_layer = uvMapNormals
+def createNodeGroups(blenderMaterial):
+	blenderMaterial.node_tree.nodes.clear()
+	new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+	new_group_node.node_tree = bpy.data.node_groups['TRM Subsurface']
+	blenderMaterial.node_tree.nodes['Group'].name = 'TRM Subsurface'
+	new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+	new_group_node.node_tree = bpy.data.node_groups['SRM Seperator']
+	blenderMaterial.node_tree.nodes['Group'].name = 'SRM Seperator'
+	new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+	new_group_node.node_tree = bpy.data.node_groups['NRM Converter']
+	blenderMaterial.node_tree.nodes['Group'].name = 'NRM Converter'
+	blenderOutput = blenderMaterial.node_tree.nodes.new("ShaderNodeOutputMaterial")
+	blenderOutput.location = Vector((400, 200))
+	blenderShader = blenderMaterial.node_tree.nodes.new("ShaderNodeBsdfPrincipled")
+	blenderShader.location = Vector((0, 200))
+	principled = blenderMaterial.node_tree.nodes['Principled BSDF']
+	Material_Output = blenderMaterial.node_tree.nodes['Material Output']
+	Material_Output.location = Vector((300, 300))
+	blenderMaterial.node_tree.links.new(blenderShader.outputs['BSDF'], Material_Output.inputs['Surface'])
+	TRM_Subsurface = blenderMaterial.node_tree.nodes['TRM Subsurface']
+	TRM_Subsurface.location = Vector((-200, 200))
+	SRM_Seperator = blenderMaterial.node_tree.nodes['SRM Seperator']
+	SRM_Seperator.location = Vector((-200, 0))
+	NRM_Converter = blenderMaterial.node_tree.nodes['NRM Converter']
+	NRM_Converter.location = Vector((-200, -200))
+	blenderMaterial.node_tree.links.new(TRM_Subsurface.outputs['Subsurface'], principled.inputs['Subsurface'])
+	blenderMaterial.node_tree.links.new(TRM_Subsurface.outputs['Subsurface Color'], principled.inputs['Subsurface Color'])
+	blenderMaterial.node_tree.links.new(SRM_Seperator.outputs['Specular'], principled.inputs['Specular'])
+	blenderMaterial.node_tree.links.new(SRM_Seperator.outputs['Roughness'], principled.inputs['Roughness'])
+	blenderMaterial.node_tree.links.new(NRM_Converter.outputs['Normal'], principled.inputs['Normal'])
+
+	return None
+
+def createTextureSlot(blenderMaterial, blenderTexture, textureRole):
+	principled = blenderMaterial.node_tree.nodes['Principled BSDF']
+	TRM_Subsurface = blenderMaterial.node_tree.nodes['TRM Subsurface']
+	SRM_Seperator = blenderMaterial.node_tree.nodes['SRM Seperator']
+	NRM_Converter = blenderMaterial.node_tree.nodes['NRM Converter']
+	rdmx = random.randint(-500, 400)
+	rdmy = random.randint(-400, 300)
+	blenderMaterial.node_tree.nodes['Image Texture'].name = textureRole
+	if 'Base_Tex_SRGB' in textureRole or 'Base_Tex_LIN' in textureRole:
+		blenderTexture.location = Vector((-500, 560))
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], principled.inputs['Base Color'])
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], TRM_Subsurface.inputs['BSM Tex'])
+		if 'pes3DDF_Hair' in blenderMaterial.fmdl_material_technique:
+			blenderMaterial.node_tree.links.new(blenderTexture.outputs['Alpha'], principled.inputs['Alpha'])
+	elif 'NormalMap_Tex_' in textureRole:
+		blenderTexture.location = Vector((-500, -220))
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], NRM_Converter.inputs['NRM Tex'])
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Alpha'], NRM_Converter.inputs['Alpha'])
+	elif 'SpecularMap_Tex_' in textureRole:
+		blenderTexture.location = Vector((-500, 40))
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['SRM Tex'])
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['RGM Tex'])
+	elif 'RoughnessMap_Tex_' in textureRole:
+		blenderTexture.location = Vector((-750, 40))
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['RGM Tex'])
+	elif 'Translucent_Tex_' in textureRole:
+		blenderTexture.location = Vector((-500, 300))
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], TRM_Subsurface.inputs['TRM Tex'])
+	elif 'MetalnessMap_Tex_' in textureRole:
+		blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], principled.inputs['Metallic'])
+		blenderTexture.location = Vector((-750, 0))
 	else:
-		blenderTextureSlot.uv_layer = uvMapColor
+		blenderTexture.location = Vector((rdmx, rdmy))
 	
-	if blenderTexture.fmdl_texture_role == 'Base_Tex_SRGB' or blenderTexture.fmdl_texture_role == 'Base_Tex_LIN':
-		blenderTextureSlot.use_map_diffuse = True
-		blenderTextureSlot.use_map_color_diffuse = True
-		blenderTextureSlot.use_map_alpha = True
-		blenderTextureSlot.use = True
-	else:
-		blenderTextureSlot.use = False
-	
-	return blenderTextureSlot
+	for nodes in blenderMaterial.node_tree.nodes:
+		nodes.select = False
+	return None
 
 def importFmdl(context, fmdl, filename, importSettings = None):
 	UV_MAP_COLOR = 'UVMap'
@@ -152,27 +204,132 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 		
 		return None
 	
-	def addTexture(blenderMaterial, textureRole, texture, textureIDs, uvMapColor, uvMapNormals, textureSearchPath, loadTextures):
+	def createNodes(blenderMaterial):
+		try:
+			blenderMaterial.node_tree.nodes.get('TRM Subsurface').name
+		except:
+			new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+			new_group_node.node_tree = bpy.data.node_groups['TRM Subsurface']
+			blenderMaterial.node_tree.nodes['Group'].name = 'TRM Subsurface'
+			new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+			new_group_node.node_tree = bpy.data.node_groups['SRM Seperator']
+			blenderMaterial.node_tree.nodes['Group'].name = 'SRM Seperator'
+			new_group_node = blenderMaterial.node_tree.nodes.new('ShaderNodeGroup')
+			new_group_node.node_tree = bpy.data.node_groups['NRM Converter']
+			blenderMaterial.node_tree.nodes['Group'].name = 'NRM Converter'
+
+	def addTexture(context, blenderMaterial, textureRole, texture, textureIDs, uvMapColor, uvMapNormals, textureSearchPath, loadTextures, texturePath):
+
+		blenderMaterial.use_nodes = True
 		identifier = (textureRole, texture)
+		texture_name = texture.filename[:-3]+"dds"
+		texturePath = os.path.join(texturePath, texture_name)
+		textureName=textureRole
+		textureLabel=texture.filename
 		if identifier in textureIDs:
-			blenderTexture = bpy.data.textures[textureIDs[identifier]]
+			blenderTexture = blenderMaterial.node_tree.get(textureIDs[identifier])
 		else:
-			blenderTexture = createTexture(textureRole, texture.directory, texture.filename)
+			if textureLabel in bpy.data.images:
+				blenderImage = bpy.data.images[texture.filename]
+			else:
+				blenderImage = bpy.data.images.new(texture.filename, width=0, height=0)
+			blenderImage.source = 'FILE'
+			createNodes(blenderMaterial)
+
+			filename = findTexture(texture, textureSearchPath)
+			if filename is None:
+				blenderImage.filepath = texturePath
+			elif filename.lower().endswith('.ftex'):
+				blenderImage.filepath = filename
+				Ftex.blenderImageLoadFtex(blenderImage, bpy.app.tempdir)
+			else:
+				blenderImage.filepath = filename
+				blenderImage.reload()
 			
-			if loadTextures:
-				filename = findTexture(texture, textureSearchPath)
-				if filename == None:
-					blenderTexture.image.filepath = texture.directory + texture.filename
-				elif filename.lower().endswith('.ftex'):
-					blenderTexture.image.filepath = filename
-					Ftex.blenderImageLoadFtex(blenderTexture.image, bpy.app.tempdir)
-				else:
-					blenderTexture.image.filepath = filename
-					blenderTexture.image.reload()
-			
-			textureIDs[identifier] = blenderTexture.name
-		
-		createTextureSlot(blenderMaterial, blenderTexture, uvMapColor, uvMapNormals)
+			if 'pes3DDF_Skin_Face' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.use_sss_translucency = True
+			if 'pes3DDF_Hair' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.blend_method = 'HASHED'
+			elif '_Glass' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.blend_method = 'HASHED'
+			elif 'pes3DDC_Adjust' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.blend_method = 'CLIP'
+				blenderMaterial.alpha_threshold = 1.0
+			elif 'fox3DDC_Blin' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.blend_method = 'HASHED'
+			elif 'fox3DDF_Blin_Translucent' in blenderMaterial.fmdl_material_technique:
+				blenderMaterial.blend_method = 'BLEND'
+				blenderMaterial.show_transparent_back = False
+			else:
+				blenderMaterial.blend_method = 'BLEND'
+				blenderMaterial.show_transparent_back = False
+				
+			blenderTexture = blenderMaterial.node_tree.nodes.new("ShaderNodeTexImage")
+			blenderTexture.fmdl_texture_filename = blenderImage.filepath
+
+			blenderTexture.fmdl_texture_directory = texture.directory
+
+			blenderTexture.fmdl_texture_role = textureRole
+			blenderTexture.name = textureName
+			blenderTexture.label = textureLabel
+			blenderTexture.image = blenderImage
+			principled = blenderMaterial.node_tree.nodes['Principled BSDF']
+
+			rdmx = random.randint(-500, 400)
+			rdmy = random.randint(-400, 300)
+			blenderImage.alpha_mode = 'STRAIGHT'
+			if 'face_bsm' in textureLabel:
+				blenderImage.alpha_mode = 'NONE'
+			blenderTexture.select = True
+			blenderMaterial.node_tree.nodes.active = blenderTexture
+			TRM_Subsurface = blenderMaterial.node_tree.nodes['TRM Subsurface']
+			TRM_Subsurface.location = Vector((-200, 200))
+			SRM_Seperator = blenderMaterial.node_tree.nodes['SRM Seperator']
+			SRM_Seperator.location = Vector((-200, 0))
+			NRM_Converter = blenderMaterial.node_tree.nodes['NRM Converter']
+			NRM_Converter.location = Vector((-200, -200))
+			blenderMaterial.node_tree.links.new(TRM_Subsurface.outputs['Subsurface'], principled.inputs['Subsurface'])
+			blenderMaterial.node_tree.links.new(TRM_Subsurface.outputs['Subsurface Color'], principled.inputs['Subsurface Color'])
+			blenderMaterial.node_tree.links.new(SRM_Seperator.outputs['Specular'], principled.inputs['Specular'])
+			blenderMaterial.node_tree.links.new(SRM_Seperator.outputs['Roughness'], principled.inputs['Roughness'])
+			blenderMaterial.node_tree.links.new(NRM_Converter.outputs['Normal'], principled.inputs['Normal'])
+			blenderImage.colorspace_settings.name = 'Non-Color'		
+			if 'Base_Tex_SRGB' in textureRole or 'Base_Tex_LIN' in textureRole:
+				blenderImage.colorspace_settings.name = 'sRGB'
+				blenderTexture.location = Vector((-500, 560))
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], principled.inputs['Base Color'])
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], TRM_Subsurface.inputs['BSM Tex'])
+				if blenderImage.alpha_mode != 'NONE':
+					blenderMaterial.node_tree.links.new(blenderTexture.outputs['Alpha'], principled.inputs['Alpha'])
+				if 'pes3DDF_Hair' in blenderMaterial.fmdl_material_technique:
+					blenderMaterial.node_tree.links.new(blenderTexture.outputs['Alpha'], principled.inputs['Alpha'])
+			elif 'NormalMap_Tex_' in textureRole:
+				blenderTexture.location = Vector((-500, -220))
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], NRM_Converter.inputs['NRM Tex'])
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Alpha'], NRM_Converter.inputs['Alpha'])
+			elif 'SpecularMap_Tex_' in textureRole:
+				blenderTexture.location = Vector((-500, 40))
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['SRM Tex'])
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['RGM Tex'])
+			elif 'RoughnessMap_Tex_' in textureRole:
+				blenderTexture.location = Vector((-750, 40))
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], SRM_Seperator.inputs['RGM Tex'])
+			elif 'Translucent_Tex_' in textureRole:
+				blenderTexture.location = Vector((-500, 300))
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], TRM_Subsurface.inputs['TRM Tex'])
+			elif 'MetalnessMap_Tex_' in textureRole:
+				blenderMaterial.node_tree.links.new(blenderTexture.outputs['Color'], principled.inputs['Metallic'])
+				blenderTexture.location = Vector((-750, 0))
+			else:
+				blenderTexture.location = Vector((rdmx, rdmy))
+
+		if blenderTexture is not None:
+			blenderTexture.fmdl_texture_filename = texture.filename
+			blenderTexture.fmdl_texture_directory = texture.directory
+			blenderTexture.fmdl_texture_role = textureRole
+
+		for nodes in blenderMaterial.node_tree.nodes:
+			nodes.select = False 
 	
 	def materialHasSeparateUVMaps(materialInstance, fmdl):
 		for mesh in fmdl.meshes:
@@ -211,12 +368,12 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 			else:
 				uvMapNormals = UV_MAP_COLOR
 			
-			blenderMaterial.emit = 1.0
-			blenderMaterial.alpha = 0.0
-			blenderMaterial.use_transparency = True
+			# blenderMaterial.emit = 1.0
+			# blenderMaterial.alpha = 0.0
+			# blenderMaterial.use_transparency = True
 			
 			for (role, texture) in materialInstance.textures:
-				addTexture(blenderMaterial, role, texture, textureIDs, uvMapColor, uvMapNormals, textureSearchPath, loadTextures)
+				addTexture(context, blenderMaterial, role, texture, textureIDs, uvMapColor, uvMapNormals, textureSearchPath, loadTextures, importSettings.texturePath)
 		
 		return materialIDs
 	
@@ -274,8 +431,8 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 		blenderArmatureObject = bpy.data.objects.new("Skeleton", blenderArmature)
 		armatureObjectID = blenderArmatureObject.name
 		
-		context.scene.objects.link(blenderArmatureObject)
-		context.scene.objects.active = blenderArmatureObject
+		context.collection.objects.link(blenderArmatureObject)
+		context.view_layer.objects.active = blenderArmatureObject
 		
 		bpy.ops.object.mode_set(context.copy(), mode = 'EDIT')
 		
@@ -302,27 +459,18 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 		vertexGroupIDs = {}
 		for bone in boneGroup.bones:
 			blenderBone = blenderArmature.bones[boneIDs[bone]]
-			blenderVertexGroup = blenderMeshObject.vertex_groups.new(blenderBone.name)
+			blenderVertexGroup = blenderMeshObject.vertex_groups.new(name=blenderBone.name)
 			vertexGroupIDs[bone] = blenderVertexGroup.name
 		return vertexGroupIDs
 	
 	def findUvMapImage(blenderMaterial, uvMapName, rolePrefix):
 		options = []
-		for slot in blenderMaterial.texture_slots:
-			if slot is None:
-				continue
-			if slot.uv_layer != uvMapName:
-				continue
-			if (
-				    slot.texture is not None
-				and slot.texture.type == 'IMAGE'
-				and slot.texture.image is not None
-				and slot.texture.image.size[0] != 0
-			):
-				image = slot.texture.image
+		for slot in blenderMaterial.node_tree.nodes:
+			if slot.type == 'TEX_IMAGE':
+				image = slot.image
+				options.append((image, slot.fmdl_texture_role))
 			else:
 				image = None
-			options.append((image, slot.texture.fmdl_texture_role))
 		
 		for (image, role) in options:
 			if role.lower().startswith(rolePrefix.lower()):
@@ -378,15 +526,15 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 			blenderMesh.use_auto_smooth = True
 		
 		if mesh.vertexFields.hasColor:
-			colorLayer = blenderMesh.vertex_colors.new()
+			colorLayer = blenderMesh.vertex_colors.new(name='color')
 			colorLayer.data.foreach_set("color", tuple(itertools.chain.from_iterable([
-				vertex.color[0:3] for vertex in loopVertices
+				vertex.color[0:4] for vertex in loopVertices
 			])))
 			colorLayer.active = True
 			colorLayer.active_render = True
 		
 		if mesh.vertexFields.uvCount >= 1:
-			uvTexture = blenderMesh.uv_textures.new(name = UV_MAP_COLOR)
+			uvTexture = blenderMesh.uv_layers.new(name = UV_MAP_COLOR)
 			uvLayer = blenderMesh.uv_layers[uvTexture.name]
 			
 			uvLayer.data.foreach_set("uv", tuple(itertools.chain.from_iterable([
@@ -396,23 +544,23 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 			uvTexture.active_clone = True
 			uvTexture.active_render = True
 			
-			image = findUvMapImage(blenderMaterial, UV_MAP_COLOR, 'Base_Tex_')
-			if image is not None:
-				for i in range(len(uvTexture.data)):
-					uvTexture.data[i].image = image
+			# image = findUvMapImage(blenderMaterial, UV_MAP_COLOR, 'Base_Tex_')
+			# if image is not None:
+			# 	for i in range(len(uvTexture.data)):
+			# 		uvTexture.data[i].image = image
 		
 		if mesh.vertexFields.uvCount >= 2 and 0 not in mesh.vertexFields.uvEqualities[1]:
-			uvTexture = blenderMesh.uv_textures.new(name = UV_MAP_NORMALS)
+			uvTexture = blenderMesh.uv_layers.new(name = UV_MAP_NORMALS)
 			uvLayer = blenderMesh.uv_layers[uvTexture.name]
 			
 			uvLayer.data.foreach_set("uv", tuple(itertools.chain.from_iterable([
 				(vertex.uv[1].u, 1.0 - vertex.uv[1].v) for vertex in loopVertices
 			])))
 			
-			image = findUvMapImage(blenderMaterial, UV_MAP_NORMALS, 'NormalMap_Tex_')
-			if image is not None:
-				for i in range(len(uvTexture.data)):
-					uvTexture.data[i].image = image
+			# image = findUvMapImage(blenderMaterial, UV_MAP_NORMALS, 'NormalMap_Tex_')
+			# if image is not None:
+			# 	for i in range(len(uvTexture.data)):
+			# 		uvTexture.data[i].image = image
 		
 		if mesh.vertexFields.uvCount >= 3:
 			raise UnsupportedFmdl("No support for fmdl files with more than 2 UV maps")
@@ -423,7 +571,7 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 		
 		blenderMeshObject = bpy.data.objects.new(blenderMesh.name, blenderMesh)
 		meshObjectID = blenderMeshObject.name
-		context.scene.objects.link(blenderMeshObject)
+		context.collection.objects.link(blenderMeshObject)
 		
 		if mesh.vertexFields.hasBoneMapping:
 			vertexGroupIDs = addSkeletonMeshModifier(blenderMeshObject, mesh.boneGroup, armatureObjectID, boneIDs)
@@ -459,7 +607,7 @@ def importFmdl(context, fmdl, filename, importSettings = None):
 			blenderMeshGroupObject = bpy.data.objects[meshObjectIDs[meshGroup.meshes[0]]]
 		else:
 			blenderMeshGroupObject = bpy.data.objects.new(meshGroup.name, None)
-			context.scene.objects.link(blenderMeshGroupObject)
+			context.collection.objects.link(blenderMeshGroupObject)
 			
 			for mesh in meshGroup.meshes:
 				bpy.data.objects[meshObjectIDs[mesh]].parent = blenderMeshGroupObject
@@ -588,13 +736,22 @@ def simplifyBlenderObjectName(name):
 	return name
 
 def exportFmdl(context, rootObjectName, exportSettings = None):
+	def iterateTextureSlots(blenderMaterial):
+		if blenderMaterial.node_tree is not None:
+			for slot in blenderMaterial.node_tree.nodes:
+				if slot is None or slot.type != "TEX_IMAGE":
+					continue
+				yield slot
+		else:
+			return None
+
 	def exportMaterial(blenderMaterial, textureFmdlObjects):
 		materialInstance = FmdlFile.FmdlFile.MaterialInstance()
 		
-		for slot in blenderMaterial.texture_slots:
-			if slot == None:
-				continue
-			blenderTexture = slot.texture
+		for blenderTexture in iterateTextureSlots(blenderMaterial):
+			# if slot == None:
+			# 	continue
+			# blenderTexture = slot.texture
 			if blenderTexture not in textureFmdlObjects:
 				texture = FmdlFile.FmdlFile.Texture()
 				texture.filename = blenderTexture.fmdl_texture_filename
@@ -689,24 +846,24 @@ def exportFmdl(context, rootObjectName, exportSettings = None):
 		
 		loopTotals = [0 for i in range(len(modifiedBlenderMesh.polygons))]
 		modifiedBlenderMesh.polygons.foreach_get("loop_total", loopTotals)
+
 		if max(loopTotals) != 3:
 			#
 			# calc_tangents() only works on triangulated meshes
 			#
-			
-			modifiedBlenderObject = bpy.data.objects.new('triangulation', modifiedBlenderMesh)
-			modifiedBlenderObject.modifiers.new('triangulation', 'TRIANGULATE')
-			newBlenderMesh = modifiedBlenderObject.to_mesh(scene, True, 'PREVIEW', calc_undeformed = True)
-			bpy.data.objects.remove(modifiedBlenderObject)
-			bpy.data.meshes.remove(modifiedBlenderMesh)
-			modifiedBlenderMesh = newBlenderMesh
+			blenderBmesh = bmesh.new()
+			blenderBmesh.from_mesh(modifiedBlenderMesh)
+			bmesh.ops.triangulate(blenderBmesh, faces=blenderBmesh.faces)
+			blenderBmesh.to_mesh(modifiedBlenderMesh)
+			blenderBmesh.free()
 		
 		modifiedBlenderMesh.use_auto_smooth = True
+		modifiedBlenderMesh.calc_tangents(uvmap=uvLayerColor)
 		if uvLayerNormal is None:
 			uvLayerTangent = uvLayerColor
 		else:
 			uvLayerTangent = uvLayerNormal
-		modifiedBlenderMesh.calc_tangents(uvLayerTangent)
+		modifiedBlenderMesh.calc_tangents(uvmap=uvLayerTangent)
 		
 		
 		
@@ -863,8 +1020,10 @@ def exportFmdl(context, rootObjectName, exportSettings = None):
 		
 		bpy.data.meshes.remove(modifiedBlenderMesh)
 		return (fmdlVertices, fmdlFaces)
-	
+
 	def exportMesh(blenderMeshObject, materialFmdlObjects, bonesByName, scene):
+
+		
 		blenderMesh = blenderMeshObject.data
 		name = blenderMeshObject.name
 		
@@ -897,18 +1056,18 @@ def exportFmdl(context, rootObjectName, exportSettings = None):
 		else:
 			colorUvMaps = []
 			normalUvMaps = []
-			for slot in blenderMaterial.texture_slots:
-				if slot == None:
-					continue
-				uvLayerName = slot.uv_layer
-				if uvLayerName not in blenderMesh.uv_layers:
-					continue
-				if '_NRM' in slot.texture.fmdl_texture_role:
-					uvMaps = normalUvMaps
-				else:
-					uvMaps = colorUvMaps
-				if uvLayerName not in uvMaps:
-					uvMaps.append(uvLayerName)
+			# for slot in blenderMesh.uv_layers:
+			# 	if slot == None:
+			# 		continue
+			# 	uvLayerName = slot
+			# 	if uvLayerName not in blenderMesh.uv_layers:
+			# 		continue
+			# 	if '_NRM' in slot.fmdl_texture_role:
+			# 		uvMaps = normalUvMaps
+			# 	else:
+			# 		uvMaps = colorUvMaps
+			# 	if uvLayerName not in uvMaps:
+			# 		uvMaps.append(uvLayerName)
 			
 			if len(colorUvMaps) > 1:
 				raise FmdlExportError("Mesh '%s' has ambiguous UV maps: multiple UV maps configured as primary UV map." % name)

@@ -1,7 +1,7 @@
 bl_info = {
 	"name": "PES FMDL format",
 	"author": "foreground",
-	"blender": (2, 79, 0),
+	"blender": (2, 80, 0),
 	"category": "Import-Export",
 	"version": (0, 7, 0),
 }
@@ -12,8 +12,8 @@ import bpy.props
 from . import UI
 
 class FMDL_MaterialParameter(bpy.types.PropertyGroup):
-	name = bpy.props.StringProperty(name = "Parameter Name")
-	parameters = bpy.props.FloatVectorProperty(name = "Parameter Values", size = 4, default = [0.0, 0.0, 0.0, 0.0])
+	name : bpy.props.StringProperty(name = "Parameter Name")
+	parameters : bpy.props.FloatVectorProperty(name = "Parameter Values", size = 4, default = [0.0, 0.0, 0.0, 0.0])
 
 def register():
 	bpy.utils.register_class(FMDL_MaterialParameter)
@@ -27,9 +27,9 @@ def register():
 	bpy.types.Material.fmdl_shadow_flags = bpy.props.IntProperty(name = "Shadow Flags", default = 0, min = 0, max = 255)
 	bpy.types.Material.fmdl_material_antiblur = bpy.props.BoolProperty(name = "Automatic Constant-Shader Antiblur", default = False, description = "Apply automatic anti-blur measures for constant shaders")
 	
-	bpy.types.Texture.fmdl_texture_filename = bpy.props.StringProperty(name = "Texture Filename")
-	bpy.types.Texture.fmdl_texture_directory = bpy.props.StringProperty(name = "Texture Directory")
-	bpy.types.Texture.fmdl_texture_role = bpy.props.StringProperty(name = "Texture Role")
+	bpy.types.ShaderNodeTexImage.fmdl_texture_filename = bpy.props.StringProperty(name = "Texture Filename")
+	bpy.types.ShaderNodeTexImage.fmdl_texture_directory = bpy.props.StringProperty(name = "Texture Directory")
+	bpy.types.ShaderNodeTexImage.fmdl_texture_role = bpy.props.StringProperty(name = "Texture Role")
 	
 	UI.register()
 

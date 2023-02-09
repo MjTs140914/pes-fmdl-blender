@@ -1670,7 +1670,7 @@ class FmdlFile:
 					(vertex.tangent.x, vertex.tangent.y, vertex.tangent.z, vertex.tangent.w)
 				))
 			if vertexFields.hasColor:
-				vertexEncoding.color = pack('< 4B', *(int(x * 255 + 0.5) for x in vertex.color))
+				vertexEncoding.color = pack('< 5B', *(int(x * 255 + 0.5) for x in vertex.color))
 			for i in range(4):
 				if i < vertexFields.uvCount:
 					if vertexFields.highPrecisionUv:

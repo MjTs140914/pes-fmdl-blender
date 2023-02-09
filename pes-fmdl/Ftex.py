@@ -299,26 +299,27 @@ def ftexToDds(ftexFilename, ddsFilename):
 
 def blenderImageLoadFtex(blenderImage, tempDir):
 	originalFilename = blenderImage.filepath
-	pos = originalFilename.replace("\\", "/").rfind('/')
-	if pos == -1:
-		baseName = originalFilename
-	else:
-		baseName = originalFilename[pos + 1:]
-	
-	try:
-		# tempDir is not always accessible
-		(ddsFileDescriptor, ddsFile) = tempfile.mkstemp(suffix = '.dds', prefix = baseName + '-', dir = tempDir)
-	except:
-		return False
-	os.close(ddsFileDescriptor)
-	if not ftexToDds(originalFilename, ddsFile):
+	if os.path.isfile(originalFilename):
+		pos = originalFilename.replace("\\", "/").rfind('/')
+		if pos == -1:
+			baseName = originalFilename
+		else:
+			baseName = originalFilename[pos + 1:]
+		
+		try:
+			# tempDir is not always accessible
+			(ddsFileDescriptor, ddsFile) = tempfile.mkstemp(suffix = '.dds', prefix = baseName + '-', dir = tempDir)
+		except:
+			return False
+		os.close(ddsFileDescriptor)
+		if not ftexToDds(originalFilename, ddsFile):
+			os.remove(ddsFile)
+			return False
+		
+		blenderImage.filepath = ddsFile
+		# Read from the pixels buffer to trigger a load operation
+		dummy = blenderImage.pixels[0]
+		blenderImage.filepath_raw = originalFilename
+		
 		os.remove(ddsFile)
-		return False
-	
-	blenderImage.filepath = ddsFile
-	# Read from the pixels buffer to trigger a load operation
-	dummy = blenderImage.pixels[0]
-	blenderImage.filepath_raw = originalFilename
-	
-	os.remove(ddsFile)
-	return True
+		return True
