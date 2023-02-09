@@ -242,6 +242,11 @@ def findDirectory(dirPath):
 					if p == "#Win":	
 						path = f"{listDir[0]}\\{os.path.join(*listDir).split(':')[1]}"
 						return path[:-4]
+					
+def findTextureDirectory(dirPath):
+	for root in os.walk(dirPath):
+		if "#windx11" in root[0]:
+			return root[0]
 
 def getDirPath(dirPath):
 	for root, directories, filenames in os.walk(dirPath):
@@ -256,7 +261,7 @@ def textureLoad(dirPath):
 			if extension.lower() == '.ftex':
 				ddsPath = os.path.join(bpy.app.tempdir, filename + '.dds')
 				ftexPath = os.path.join(root, filename + extension)
-				if not os.path.isfile(ddsPath) and not "lut" in ddsPath and not "LUT" in ddsPath:
+				if not os.path.isfile(ddsPath):
 					try:
 						Ftex.ftexToDds(ftexPath, ddsPath)
 					except Exception as msg:
@@ -294,11 +299,13 @@ class FMDL_Scene_Import(bpy.types.Operator, bpy_extras.io_utils.ImportHelper):
 		node_group()
 		filename = self.filepath
 		getTextureDir = str()
-		textureDir = f"{findDirectory(os.path.dirname(filename))}sourceimages"
-		if os.path.exists(textureDir):
-			getTextureDir = getDirPath(textureDir)
-		if os.path.exists(getTextureDir):
-			textureLoad(getTextureDir)
+		if context.scene.fmdl_import_load_textures:
+			textureDir = f"{findDirectory(os.path.dirname(filename))}"
+			win11Dir = str(findTextureDirectory(textureDir))
+			if os.path.exists(win11Dir):
+				getTextureDir = getDirPath(win11Dir)
+			if os.path.exists(getTextureDir):
+				textureLoad(getTextureDir)
 
 		importSettings = IO.ImportSettings()
 		importSettings.enableExtensions = self.extensions_enabled
